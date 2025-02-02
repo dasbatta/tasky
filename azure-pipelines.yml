@@ -1,0 +1,66 @@
+# Docker
+# Build and push an image to Azure Container Registry
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+trigger:
+- main
+
+resources:
+- repo: self
+
+variables:
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: 'ed4ec66a-67f4-434e-a9e3-187969df13e5'
+  imageRepository: 'app'
+  containerRegistry: 'wizdemo.azurecr.io'
+  acr: 'wizdemo'
+  dockerfilePath: 'tasky/Dockerfile'
+  tag: 'latest'
+
+stages:
+- stage: Build
+  displayName: Build, Scan and push stage
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      name: 'Default'
+    steps:
+    - task: Docker@2
+      displayName: 'Login to ACR'
+      inputs:
+        command: login
+        containerRegistry: $(acr)    
+    - script: |
+        git clone https://github.com/dasbatta/tasky.git
+        cd tasky
+        echo "Hello Wizards!!" > wizexercise.txt
+        sed -i '/^COPY --from=build  \/go\/src\/tasky\/assets \.\/assets$/a COPY wizexercise.txt /app/' Dockerfile
+        cat Dockerfile       
+      displayName: 'Create text file and modify Dockerfile'    
+
+    - task: Docker@2
+      displayName: 'Build Docker Image'
+      inputs:
+        command: 'build'
+        Dockerfile: $(dockerfilePath)
+        tags: |
+          $(tag)
+        containerRegistry: $(acr) 
+        repository: $(imageRepository)
+
+    - script: |
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --no-progress wizdemo.azurecr.io/$(imageRepository):$(tag)
+      displayName: 'Scan Docker Image with Trivy'
+      continueOnError: true
+
+
+    - task: Docker@2
+      displayName: 'Push Docker Image'
+      inputs:
+        command: 'push'
+        containerRegistry: $(acr) 
+        repository: $(imageRepository)
+        tags: |
+          $(tag)
+      condition: succeededOrFailed()
